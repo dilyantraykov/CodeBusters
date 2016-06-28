@@ -101,9 +101,29 @@ namespace CodeBusters
 
                 foreach (var buster in myBusters)
                 {
-                    var gameState = (GameState)(turn / 50);
+                    var gameState = DefineGameState(turn);
                     buster.Value.ProcessTurn(myBusters, ref enemyBusters, ref ghosts, gameState);
                 }
+            }
+        }
+
+        private static GameState DefineGameState(int turn)
+        {
+            if (turn < 70)
+            {
+                return GameState.Early;
+            }
+            else if (turn < 120)
+            {
+                return GameState.MidEarly;
+            }
+            else if (turn < 170)
+            {
+                return GameState.MidLate;
+            }
+            else
+            {
+                return GameState.Late;
             }
         }
     }
