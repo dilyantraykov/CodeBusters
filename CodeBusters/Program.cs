@@ -109,15 +109,15 @@ namespace CodeBusters
 
         private static GameState DefineGameState(int turn)
         {
-            if (turn < 70)
+            if (turn < 50)
             {
                 return GameState.Early;
             }
-            else if (turn < 120)
+            else if (turn < 100)
             {
                 return GameState.MidEarly;
             }
-            else if (turn < 170)
+            else if (turn < 180)
             {
                 return GameState.MidLate;
             }
@@ -200,10 +200,16 @@ namespace CodeBusters
 
         public void ProcessTurn(Dictionary<int, Buster> myBusters, ref List<Buster> enemyBusters, ref List<Ghost> ghosts, GameState gameState)
         {
-            Console.Error.WriteLine("Processing turn...");
+            Console.Error.WriteLine("Processing turn {0}...", gameState);
 
             this.StunRecovery -= 1;
             bool finished;
+
+            if (gameState == GameState.Late)
+            {
+                myBusters.Values.ToList().ForEach(b => b.IsInterseptor = true);
+                Console.Error.WriteLine("----- Transforming interseptors...");
+            }
 
             if (this.CanReleaseGhost())
             {
@@ -215,6 +221,7 @@ namespace CodeBusters
 
             if (!finished && this.ShouldGoBackToBase())
             {
+                Console.Error.WriteLine("Should go back to base...");
                 this.MoveTowardsBase(gameState);
                 return;
             }
@@ -227,6 +234,28 @@ namespace CodeBusters
             if (!finished)
             {
                 MoveRandomlyIfNoGhostsAreNear(this.TeamId, gameState);
+            }
+        }
+
+        private bool ShouldGoStraightToBase(int teamCoeff, int targetX, int targetY, GameState gameState)
+        {
+            Console.Error.WriteLine("Going straight to base...");
+
+            if (teamCoeff == 1)
+            {
+                var isOnTopBorder = this.Point.X <= targetX && this.Point.Y == 0;
+                var isOnLeftBorder = this.Point.X == 0 && this.Point.Y <= targetY;
+                var isTooEarlyToRunAway = gameState == GameState.Early;
+
+                return isOnTopBorder || isOnLeftBorder || isTooEarlyToRunAway;
+            }
+            else
+            {
+                var isOnBottomBorder = this.Point.X >= targetX && this.Point.Y == Constants.MaxHeight;
+                var isOnRightBorder = this.Point.X == Constants.MaxWidth && this.Point.Y >= targetY;
+                var isTooEarlyToRunAway = gameState == GameState.Early;
+
+                return isOnBottomBorder || isOnRightBorder || isTooEarlyToRunAway;
             }
         }
 
@@ -298,10 +327,36 @@ namespace CodeBusters
             }
         }
 
+        private void MoveToBaseMidPoints(Point basePoint, int targetX, int targetY)
+        {
+            if (this.TeamId == 0)
+            {
+                if (this.Point.X > targetX)
+                {
+                    this.Move(new Point(targetX, basePoint.Y));
+                }
+                else if (this.Point.X < targetX)
+                {
+                    this.Move(new Point(basePoint.X, targetY));
+                }
+            }
+            else
+            {
+                if (this.Point.X < targetX)
+                {
+                    this.Move(new Point(targetX, basePoint.Y));
+                }
+                else if (this.Point.X > targetX)
+                {
+                    this.Move(new Point(basePoint.X, targetY));
+                }
+            }
+        }
+
         internal void InitializeMovingPoint(int teamId)
         {
             Console.Error.WriteLine("Initializing moving point...");
-            if (this.Position == 3)
+            if (this.Position == 1)
             {
                 if (teamId == 0)
                 {
@@ -312,7 +367,7 @@ namespace CodeBusters
                     this.MovingPoint = Constants.Team0Base;
                 }
             }
-            else if (this.Position == 2)
+            else if (this.Position % 2 == 0)
             {
                 if (teamId == 0)
                 {
@@ -410,15 +465,16 @@ namespace CodeBusters
             if (this.IsInterseptor)
             {
                 movingPoint = this.OppositeTeamBase;
+                var baseOffset = Geometry.GetLegsOfRightTriangle(Constants.VisibleDistance);
                 var pointOffset = 300;
 
                 var point1 = movingPoint
-                            .AddX(this.TeamCoeff * -Constants.MaxGhostBustDistance + pointOffset)
-                            .AddY(this.TeamCoeff * -Constants.MaxGhostBustDistance - pointOffset);
+                            .AddX(this.TeamCoeff * -baseOffset + pointOffset)
+                            .AddY(this.TeamCoeff * -baseOffset - pointOffset);
 
                 var point2 = movingPoint
-                        .AddX(this.TeamCoeff * -Constants.MaxGhostBustDistance - pointOffset)
-                        .AddY(this.TeamCoeff * -Constants.MaxGhostBustDistance + pointOffset);
+                        .AddX(this.TeamCoeff * -baseOffset - pointOffset)
+                        .AddY(this.TeamCoeff * -baseOffset + pointOffset);
 
                 movingPoint = point1;
 
@@ -531,23 +587,23 @@ namespace CodeBusters
 
         internal void Move(Point point)
         {
-            Console.WriteLine("MOVE {0} {1} {2}", point.X, point.Y, this.StunRecovery); // MOVE x y | BUST id | RELEASE
+            Console.WriteLine("MOVE {0} {1} {2}", point.X, point.Y, this.IsInterseptor); // MOVE x y | BUST id | RELEASE
         }
 
         internal void Bust(int id)
         {
-            Console.WriteLine("BUST {0} BUST {0} {1}", id, this.StunRecovery); // MOVE x y | BUST id | RELEASE
+            Console.WriteLine("BUST {0} BUST {0} {1}", id, this.IsInterseptor); // MOVE x y | BUST id | RELEASE
         }
 
         internal void Release()
         {
-            Console.WriteLine("RELEASE RELEASE {0}", this.StunRecovery); // MOVE x y | BUST id | RELEASE
+            Console.WriteLine("RELEASE RELEASE {0}", this.IsInterseptor); // MOVE x y | BUST id | RELEASE
         }
 
         internal void Stun(int id)
         {
             this.StunRecovery = 20;
-            Console.WriteLine("STUN {0} STUN {0} {1}", id, this.StunRecovery); // MOVE x y | BUST id | RELEASE
+            Console.WriteLine("STUN {0} STUN {0} {1}", id, this.IsInterseptor); // MOVE x y | BUST id | RELEASE
         }
 
         internal Buster GetBusterById(List<Buster> busters, int id)
