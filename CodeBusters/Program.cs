@@ -237,7 +237,7 @@ namespace CodeBusters
             }
         }
 
-        private bool ShouldGoStraightToBase(int teamCoeff, int targetX, int targetY, GameState gameState)
+        internal bool ShouldGoStraightToBase(int teamCoeff, int targetX, int targetY, GameState gameState)
         {
             Console.Error.WriteLine("Going straight to base...");
 
@@ -522,6 +522,31 @@ namespace CodeBusters
             return randomPoint;
         }
 
+        #region Commands
+        internal void Move(Point point)
+        {
+            Console.WriteLine("MOVE {0} {1} {2}", point.X, point.Y, this.IsInterseptor); // MOVE x y | BUST id | RELEASE
+        }
+
+        internal void Bust(int id)
+        {
+            Console.WriteLine("BUST {0} BUST {0} {1}", id, this.IsInterseptor); // MOVE x y | BUST id | RELEASE
+        }
+
+        internal void Release()
+        {
+            Console.WriteLine("RELEASE RELEASE {0}", this.IsInterseptor); // MOVE x y | BUST id | RELEASE
+        }
+
+        internal void Stun(int id)
+        {
+            this.StunRecovery = 20;
+            Console.WriteLine("STUN {0} STUN {0} {1}", id, this.IsInterseptor); // MOVE x y | BUST id | RELEASE
+        }
+        #endregion
+
+        #region Boolean Helpers
+
         internal bool HasReachedACorner()
         {
             return HasReachedBottomLeftCorner() || HasReachedBottomRightCorner()
@@ -546,74 +571,6 @@ namespace CodeBusters
         internal bool HasReachedTopLeftCorner()
         {
             return this.IsInRange(Constants.Team0Base, Constants.MaxGhostBustDistance);
-        }
-
-        private void MoveDiagonallyDown()
-        {
-            this.MoveInUnits(Constants.MaxWidth, Constants.MaxHeight);
-        }
-
-        private void MoveDiagonallyUp()
-        {
-            this.MoveInUnits(-Constants.MaxWidth, -Constants.MaxHeight);
-        }
-
-        private void MoveUp()
-        {
-            this.MoveInUnits(-800, 0);
-        }
-
-        private void MoveDown()
-        {
-            this.MoveInUnits(800, 100);
-        }
-
-        private void MoveRight()
-        {
-            this.MoveInUnits(100, 800);
-        }
-
-        private void MoveLeft()
-        {
-            this.MoveInUnits(0, -800);
-        }
-
-        private void MoveInUnits(int verticalOffset, int horizontalOffset)
-        {
-            var newX = this.Point.X + verticalOffset;
-            var nexY = this.Point.Y + horizontalOffset;
-            this.Move(new Point(newX, nexY));
-        }
-
-        internal void Move(Point point)
-        {
-            Console.WriteLine("MOVE {0} {1} {2}", point.X, point.Y, this.IsInterseptor); // MOVE x y | BUST id | RELEASE
-        }
-
-        internal void Bust(int id)
-        {
-            Console.WriteLine("BUST {0} BUST {0} {1}", id, this.IsInterseptor); // MOVE x y | BUST id | RELEASE
-        }
-
-        internal void Release()
-        {
-            Console.WriteLine("RELEASE RELEASE {0}", this.IsInterseptor); // MOVE x y | BUST id | RELEASE
-        }
-
-        internal void Stun(int id)
-        {
-            this.StunRecovery = 20;
-            Console.WriteLine("STUN {0} STUN {0} {1}", id, this.IsInterseptor); // MOVE x y | BUST id | RELEASE
-        }
-
-        internal Buster GetBusterById(List<Buster> busters, int id)
-        {
-            return busters.Find(b => b.Id == id);
-        }
-
-        internal Ghost GetClosestGhost(IList<Ghost> ghosts)
-        {
-            return ghosts.First();
         }
 
         internal bool IsInRange(Point point, double distance)
@@ -656,6 +613,7 @@ namespace CodeBusters
                 this.StunRecovery <= 1 &&
                 Geometry.CalculateDistance(this.Point, buster.Point) <= (Constants.VisibleDistance - 100);
         }
+        #endregion
 
         public override string ToString()
         {
