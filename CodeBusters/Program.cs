@@ -29,6 +29,9 @@ namespace CodeBusters
 
         public const int MaxHelpDistance = 5000;
 
+        public const int TurnsUntilStunnedBusterCanMoveAgain = 5;
+        public const int TurnsUntilBusterCanStunAgain = 10;
+
         public const int MaxDistanceFromBaseToReleaseGhost = 1600;
 
         public static Point Team0Base = new Point(0, 0);
@@ -50,6 +53,8 @@ namespace CodeBusters
             int myTeamId = int.Parse(Console.ReadLine()); // if this is 0, your base is on the top left of the map, if it is one, on the bottom right
 
             var myBusters = new Dictionary<int, Buster>();
+            var enemyBusters = new Dictionary<int, Buster>();
+            var ghosts = new Dictionary<int, Ghost>();
             int turn = 0;
 
             // game loop
@@ -57,8 +62,8 @@ namespace CodeBusters
             {
                 turn++;
                 int entitiesCount = int.Parse(Console.ReadLine()); // the number of busters and ghosts visible to you
-                var ghosts = new List<Ghost>();
-                var enemyBusters = new List<Buster>();
+                var visibleGhosts = new Dictionary<int, Ghost>();
+                var visibleEnemies = new Dictionary<int, Buster>();
 
                 // Process Visible Area
                 for (int i = 0; i < entitiesCount; i++)
@@ -77,7 +82,8 @@ namespace CodeBusters
                         {
                             if (!myBusters.ContainsKey(entityId))
                             {
-                                myBusters.Add(entityId, new Buster(entityId, new Point(x, y), entityType, (State)state, value, myBusters.Count + 1, bustersPerPlayer));
+                                var buster = new Buster(entityId, new Point(x, y), entityType, (State)state, value, myBusters.Count + 1, bustersPerPlayer);
+                                myBusters.Add(entityId, buster);
                             }
                             else
                             {
@@ -95,21 +101,51 @@ namespace CodeBusters
                         }
                         else
                         {
-                            enemyBusters.Add(new Buster(entityId, new Point(x, y), entityType, (State)state, value));
+                            if (!enemyBusters.ContainsKey(entityId))
+                            {
+                                var buster = new Buster(entityId, new Point(x, y), entityType, (State)state, value);
+                                enemyBusters.Add(entityId, buster);
+                                visibleEnemies.Add(entityId, buster);
+                            }
+                            else
+                            {
+                                enemyBusters[entityId].Point = new Point(x, y);
+                                enemyBusters[entityId].State = (State)state;
+                                if ((State)state == State.CarryingGhost || (State)state == State.TrappingGhost)
+                                {
+                                    enemyBusters[entityId].GhostId = value;
+                                }
+                                else
+                                {
+                                    enemyBusters[entityId].GhostId = -1;
+                                }
+
+                                visibleEnemies.Add(entityId, enemyBusters[entityId]);
+                            }
                         }
                     }
                     else if (entityType == -1)
                     {
-                        var ghost = new Ghost(entityId, new Point(x, y), value, state);
-
-                        ghosts.Add(ghost);
+                        if (!ghosts.ContainsKey(entityId))
+                        {
+                            var ghost = new Ghost(entityId, new Point(x, y), value, state);
+                            ghosts.Add(entityId, ghost);
+                            visibleGhosts.Add(entityId, ghost);
+                        }
+                        else
+                        {
+                            ghosts[entityId].Point = new Point(x, y);
+                            ghosts[entityId].Stamina = state;
+                            ghosts[entityId].BustersCount = value;
+                            visibleGhosts.Add(entityId, ghosts[entityId]);
+                        }
                     }
                 }
 
                 foreach (var buster in myBusters)
                 {
                     var gameState = DefineGameState(turn);
-                    buster.Value.ProcessTurn(myBusters, ref enemyBusters, ref ghosts, gameState);
+                    buster.Value.ProcessTurn(myBusters, ref enemyBusters, ref ghosts, ref visibleEnemies, ref visibleGhosts, gameState);
                 }
             }
         }
@@ -205,7 +241,7 @@ namespace CodeBusters
         public int TeamSize { get; set; }
         public int TeamCoeff { get; set; }
 
-        public void ProcessTurn(Dictionary<int, Buster> myBusters, ref List<Buster> enemyBusters, ref List<Ghost> ghosts, GameState gameState)
+        public void ProcessTurn(Dictionary<int, Buster> myBusters, ref Dictionary<int, Buster> enemyBusters, ref Dictionary<int, Ghost> ghosts, ref Dictionary<int, Buster> visibleEnemies, ref Dictionary<int, Ghost> visibleGhosts, GameState gameState)
         {
             Console.Error.WriteLine("Processing turn {0}...", gameState);
 
@@ -214,7 +250,7 @@ namespace CodeBusters
 
             if (gameState == GameState.Late)
             {
-                myBusters.Values.ToList().ForEach(b => b.IsInterseptor = true);
+                myBusters.Values.ToList().ForEach(b => b.IsInterseptor = false);
                 Console.Error.WriteLine("----- Transforming interseptors...");
             }
 
@@ -224,7 +260,7 @@ namespace CodeBusters
                 return;
             }
 
-            finished = ProcessEnemies(ref enemyBusters, ghosts);
+            finished = ProcessEnemies(ref visibleEnemies, ghosts);
 
             if (!finished && this.ShouldGoBackToBase())
             {
@@ -236,7 +272,7 @@ namespace CodeBusters
 
             if (!finished)
             {
-                finished = ProcessGhosts(ref ghosts, gameState);
+                finished = ProcessGhosts(ref visibleGhosts, gameState);
             }
 
             if (!finished)
@@ -321,7 +357,7 @@ namespace CodeBusters
 
             if (this.Position == 1)
             {
-                this.MovingPoint = this.BasePoint;
+                this.MovingPoint = this.OppositeTeamBase;
             }
             else if (this.Position % 2 == 0)
             {
@@ -335,13 +371,13 @@ namespace CodeBusters
             Console.Error.WriteLine("Moving point: {0}", this.MovingPoint);
         }
 
-        internal bool ProcessGhosts(ref List<Ghost> ghosts, GameState gameState)
+        internal bool ProcessGhosts(ref Dictionary<int, Ghost> visibleGhosts, GameState gameState)
         {
             Console.Error.WriteLine("Processing ghosts...");
 
-            ghosts = ghosts.OrderBy(g => g.Stamina).ToList();
+            var sortedGhosts = visibleGhosts.Values.OrderBy(g => g.Stamina);
 
-            foreach (var ghost in ghosts)
+            foreach (var ghost in sortedGhosts)
             {
                 if (this.CanBustGhost(ghost))
                 {
@@ -373,11 +409,11 @@ namespace CodeBusters
             return false;
         }
 
-        internal bool ProcessEnemies(ref List<Buster> enemyBusters, List<Ghost> ghosts)
+        internal bool ProcessEnemies(ref Dictionary<int, Buster> enemyBusters, Dictionary<int, Ghost> ghosts)
         {
             Console.Error.WriteLine("Processing enemies...");
 
-            foreach (var buster in enemyBusters)
+            foreach (var buster in enemyBusters.Values)
             {
                 if (this.CanStunEnemyBuster(buster, ghosts))
                 {
@@ -447,7 +483,7 @@ namespace CodeBusters
 
         internal Point GetRandomPoint()
         {
-            var optimalDistance = Constants.MaxGhostBustDistance;
+            var optimalDistance = Geometry.GetLegsOfRightTriangle(Constants.MaxGhostBustDistance);
             var randomPoints = new List<Point>()
             {
                 Constants.Team0Base.AddX(optimalDistance).AddY(optimalDistance),
@@ -461,9 +497,9 @@ namespace CodeBusters
             return randomPoint;
         }
 
-        internal Ghost GetGhostById(int id, List<Ghost> ghosts)
+        internal Ghost GetGhostById(int id, Dictionary<int, Ghost> ghosts)
         {
-            return ghosts.FirstOrDefault(g => g.Id == id);
+            return ghosts.Values.FirstOrDefault(g => g.Id == id);
         }
 
         #region Commands
@@ -484,7 +520,7 @@ namespace CodeBusters
 
         internal void Stun(int id)
         {
-            this.StunRecovery = 20;
+            this.StunRecovery = Constants.TurnsUntilBusterCanStunAgain;
             Console.WriteLine("STUN {0} STUN {0} {1}", id, this.IsInterseptor); // MOVE x y | BUST id | RELEASE
         }
         #endregion
@@ -543,10 +579,10 @@ namespace CodeBusters
             return Geometry.CalculateDistance(this.Point, ghost.Point) < Constants.MinGhostBustDistance;
         }
 
-        internal bool CanStunEnemyBuster(Buster buster, List<Ghost> ghosts)
+        internal bool CanStunEnemyBuster(Buster buster, Dictionary<int, Ghost> ghosts)
         {
             return (buster.State == State.CarryingGhost ||
-                (buster.State == State.TrappingGhost) && this.GetGhostById(buster.GhostId, ghosts)?.Stamina < 10) &&
+                (buster.State == State.TrappingGhost && this.GetGhostById(buster.GhostId, ghosts)?.Stamina < 10)) &&
                 this.StunRecovery <= 0 &&
                 Geometry.CalculateDistance(this.Point, buster.Point) <= Constants.MaxGhostBustDistance;
         }
