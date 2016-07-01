@@ -29,8 +29,8 @@ namespace CodeBusters
 
         public const int MaxHelpDistance = 5000;
 
-        public const int TurnsUntilStunnedBusterCanMoveAgain = 5;
-        public const int TurnsUntilBusterCanStunAgain = 10;
+        public const int TurnsUntilStunnedBusterCanMoveAgain = 10;
+        public const int TurnsUntilBusterCanStunAgain = 20;
 
         public const int MaxDistanceFromBaseToReleaseGhost = 1600;
 
@@ -309,7 +309,11 @@ namespace CodeBusters
 
             if (gameState == GameState.Late)
             {
-                this.Move(Constants.TopRightCorner);
+                var distanceToTopRightCorner = Geometry.CalculateDistance(this.Point, Constants.TopRightCorner);
+                var distanceToBottomLeftCorner = Geometry.CalculateDistance(this.Point, Constants.BottomLeftCorner);
+                var targetPoint = distanceToTopRightCorner < distanceToBottomLeftCorner ? Constants.TopRightCorner : Constants.BottomLeftCorner;
+
+                this.Move(targetPoint);
                 return;
             }
 
@@ -440,8 +444,9 @@ namespace CodeBusters
             if (this.IsInterseptor)
             {
                 movingPoint = this.OppositeTeamBase;
-                var baseOffset = Constants.MaxGhostBustDistance;
-                var pointOffset = 400;
+                // TODO: Calculate best offsets to intersept
+                var baseOffset = Geometry.GetLegsOfRightTriangle(Constants.VisibleDistance);
+                var pointOffset = 300;
 
                 var point1 = movingPoint
                             .AddX(this.TeamCoeff * -baseOffset + pointOffset)
@@ -535,22 +540,22 @@ namespace CodeBusters
 
         internal bool HasReachedBottomRightCorner()
         {
-            return this.IsInRange(Constants.Team1Base, Constants.OptimalDistanceFromBaseToCatchGhosts);
+            return this.IsInRange(Constants.Team1Base, Constants.MaxGhostBustDistance);
         }
 
         internal bool HasReachedTopRightCorner()
         {
-            return this.IsInRange(Constants.TopRightCorner, Constants.OptimalDistanceFromBaseToCatchGhosts);
+            return this.IsInRange(Constants.TopRightCorner, Constants.MaxGhostBustDistance);
         }
 
         internal bool HasReachedBottomLeftCorner()
         {
-            return this.IsInRange(Constants.BottomLeftCorner, Constants.OptimalDistanceFromBaseToCatchGhosts);
+            return this.IsInRange(Constants.BottomLeftCorner, Constants.MaxGhostBustDistance);
         }
 
         internal bool HasReachedTopLeftCorner()
         {
-            return this.IsInRange(Constants.Team0Base, Constants.OptimalDistanceFromBaseToCatchGhosts);
+            return this.IsInRange(Constants.Team0Base, Constants.MaxGhostBustDistance);
         }
 
         internal bool IsInRange(Point point, double distance)
