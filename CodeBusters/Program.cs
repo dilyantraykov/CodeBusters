@@ -22,12 +22,15 @@ namespace CodeBusters
         public const int MinGhostBustDistance = 900;
         public const int MaxGhostBustDistance = 1760;
 
-        public static int DistanceFromBaseToGetToBorder = MaxGhostBustDistance*2;
+        public static int DistanceFromBaseToGetToBorder = MaxGhostBustDistance * 2;
 
-        public static int OptimalDistanceFromBaseToCatchGhosts =
+        public static int OptimalDistanceFromCornerToCatchGhosts =
             Geometry.GetHypothenuseOfRightTriangle(MaxGhostBustDistance);
 
-        public const int MaxHelpDistance = 5000;
+        public static int OptimalXandYFromCornerToCatchGhosts =
+            Geometry.GetLegsOfRightTriangle(VisibleDistance);
+
+        public const int MaxHelpDistance = 10000;
 
         public const int TurnsUntilStunnedBusterCanMoveAgain = 10;
         public const int TurnsUntilBusterCanStunAgain = 20;
@@ -39,6 +42,10 @@ namespace CodeBusters
 
         public static Point TopRightCorner = new Point(MaxWidth, 0);
         public static Point BottomLeftCorner = new Point(0, MaxHeight);
+
+        internal const int EarlyGameTurns = 50;
+        internal const int MidEarlyGameTurns = 100;
+        internal const int MidLateGameTurns = 150;
     }
 
     /**
@@ -55,12 +62,23 @@ namespace CodeBusters
             var myBusters = new Dictionary<int, Buster>();
             var enemyBusters = new Dictionary<int, Buster>();
             var ghosts = new Dictionary<int, Ghost>();
-            int turn = 0;
+
+            var gameContext = new GameContext()
+            {
+                BustersPerTeam = bustersPerPlayer,
+                EnemyBusters = enemyBusters,
+                EnemyScore = 0,
+                Turn = 0,
+                GhostCount = ghostCount,
+                Ghosts = ghosts,
+                MyBusters = myBusters,
+                MyScore = 0
+            };
 
             // game loop
             while (true)
             {
-                turn++;
+                gameContext.Turn++;
                 int entitiesCount = int.Parse(Console.ReadLine()); // the number of busters and ghosts visible to you
                 var visibleGhosts = new Dictionary<int, Ghost>();
                 var visibleEnemies = new Dictionary<int, Buster>();
@@ -142,31 +160,14 @@ namespace CodeBusters
                     }
                 }
 
+                gameContext.MyBusters = myBusters;
+                gameContext.VisibleEnemies = visibleEnemies;
+                gameContext.VisibleGhosts = visibleGhosts;
+
                 foreach (var buster in myBusters)
                 {
-                    var gameState = DefineGameState(turn);
-                    buster.Value.ProcessTurn(myBusters, ref enemyBusters, ref ghosts, ref visibleEnemies, ref visibleGhosts, gameState);
+                    buster.Value.ProcessTurn(gameContext);
                 }
-            }
-        }
-
-        private static GameState DefineGameState(int turn)
-        {
-            if (turn < 50)
-            {
-                return GameState.Early;
-            }
-            else if (turn < 100)
-            {
-                return GameState.MidEarly;
-            }
-            else if (turn < 180)
-            {
-                return GameState.MidLate;
-            }
-            else
-            {
-                return GameState.Late;
             }
         }
     }
@@ -190,6 +191,7 @@ namespace CodeBusters
     public class Buster : Entity
     {
         private int teamId;
+        private Point movingPoint;
 
         public Buster()
         {
@@ -213,7 +215,19 @@ namespace CodeBusters
             : this(id, point, teamId, state, ghostId)
         {
             this.Position = position;
-            this.IsInterseptor = this.Position == 2 || this.Position == 3;
+            if (this.Position == 2)
+            {
+                this.InterseptorId = 1;
+            }
+            else if (this.Position == 4)
+            {
+                this.InterseptorId = 2;
+            }
+            else
+            {
+                this.InterseptorId = -1;
+            }
+
             this.TeamSize = teamSize;
             InitializeMovingPoint();
         }
@@ -233,254 +247,365 @@ namespace CodeBusters
         public Point BasePoint { get; set; }
         public int StunRecovery { get; set; }
         public bool HasFinishedCourse { get; set; }
-        public Point MovingPoint { get; set; }
+
+        public Point MovingPoint
+        {
+            get { return this.movingPoint; }
+            set
+            {
+                this.PreviousMovingPoint = this.movingPoint;
+
+                this.movingPoint = value;
+            }
+        }
+
+        public Point PreviousMovingPoint { get; set; }
         public Point HelpPoint { get; set; }
-        public bool IsInterseptor { get; set; }
+        public int InterseptorId { get; set; }
         public Point OppositeTeamBase { get; private set; }
         public int Position { get; set; }
         public int TeamSize { get; set; }
         public int TeamCoeff { get; set; }
 
-        public void ProcessTurn(Dictionary<int, Buster> myBusters, ref Dictionary<int, Buster> enemyBusters, ref Dictionary<int, Ghost> ghosts, ref Dictionary<int, Buster> visibleEnemies, ref Dictionary<int, Ghost> visibleGhosts, GameState gameState)
+        public void ProcessTurn(GameContext gameContext)
         {
-            Console.Error.WriteLine("Processing turn {0}...", gameState);
+            Console.Error.WriteLine("{0}) Processing turn. State: {1}", this.Id, gameContext.GameState);
 
             this.StunRecovery -= 1;
             var finished = false;
 
-            if (gameState == GameState.Late)
+            if (gameContext.GameState == GameState.Late && gameContext.MyBusters.Values.Any(b => b.InterseptorId > 0))
             {
-                myBusters.Values.ToList().ForEach(b => b.IsInterseptor = false);
+                gameContext.MyBusters.Values.ToList().ForEach(b => b.InterseptorId = 0);
                 Console.Error.WriteLine("----- Transforming interseptors...");
             }
 
             if (this.CanReleaseGhost())
             {
                 this.Release();
+                gameContext.MyScore++;
+                Console.Error.WriteLine("{0}) Releasing ghost #{1}", this.Id, this.GhostId);
+                gameContext.Ghosts.Remove(this.GhostId);
                 return;
             }
 
-            finished = ProcessEnemies(ref visibleEnemies, ghosts);
+            finished = this.ProcessEnemies(gameContext);
 
             if (!finished && this.ShouldGoBackToBase())
             {
-                Console.Error.WriteLine("Should go back to base...");
-
-                this.MoveTowardsBase(gameState);
+                this.MoveTowardsBase(gameContext.GameState);
                 return;
             }
 
             if (!finished)
             {
-                finished = ProcessGhosts(ref visibleGhosts, gameState);
+                finished = this.ProcessGhosts(gameContext);
             }
 
             if (!finished)
             {
-                MoveRandomlyIfNoGhostsAreNear(this.TeamId, gameState);
+                finished = this.ProcessHelpPoint();
+            }
+
+            if (!finished)
+            {
+                MoveRandomlyIfNoGhostsAreNear(gameContext);
             }
         }
 
         internal bool ShouldGoStraightToBase(int teamCoeff, int targetX, int targetY, GameState gameState)
         {
-            Console.Error.WriteLine("Going straight to base...");
-
             if (teamCoeff == 1)
             {
+                var noNeedToGoToMidPoint = this.Point.X < targetX && this.Point.Y <= targetY;
                 var isOnTopBorder = this.Point.X <= targetX && this.Point.Y == 0;
                 var isOnLeftBorder = this.Point.X == 0 && this.Point.Y <= targetY;
                 var isTooEarlyToRunAway = gameState == GameState.Early;
 
-                return isOnTopBorder || isOnLeftBorder || isTooEarlyToRunAway;
+                return noNeedToGoToMidPoint || isOnTopBorder || isOnLeftBorder || isTooEarlyToRunAway;
             }
             else
             {
+                var noNeedToGoToMidPoint = this.Point.X >= targetX && this.Point.Y >= targetY;
                 var isOnBottomBorder = this.Point.X >= targetX && this.Point.Y == Constants.MaxHeight;
                 var isOnRightBorder = this.Point.X == Constants.MaxWidth && this.Point.Y >= targetY;
                 var isTooEarlyToRunAway = gameState == GameState.Early;
 
-                return isOnBottomBorder || isOnRightBorder || isTooEarlyToRunAway;
+                return noNeedToGoToMidPoint || isOnBottomBorder || isOnRightBorder || isTooEarlyToRunAway;
             }
+        }
+
+        internal Point GetCornerToMoveAtWithGhostInLateGame(Buster buster)
+        {
+            var distanceToTopRightCorner = Geometry.CalculateDistance(buster.Point, Constants.TopRightCorner);
+            var distanceToBottomLeftCorner = Geometry.CalculateDistance(buster.Point, Constants.BottomLeftCorner);
+            var targetPoint = distanceToTopRightCorner < distanceToBottomLeftCorner ? Constants.TopRightCorner : Constants.BottomLeftCorner;
+
+            return targetPoint;
+
         }
 
         internal void MoveTowardsBase(GameState gameState)
         {
-            Console.Error.WriteLine("Moving towards base...");
-
-            if (gameState == GameState.Late)
-            {
-                var distanceToTopRightCorner = Geometry.CalculateDistance(this.Point, Constants.TopRightCorner);
-                var distanceToBottomLeftCorner = Geometry.CalculateDistance(this.Point, Constants.BottomLeftCorner);
-                var targetPoint = distanceToTopRightCorner < distanceToBottomLeftCorner ? Constants.TopRightCorner : Constants.BottomLeftCorner;
-
-                this.Move(targetPoint);
-                return;
-            }
+            Point point;
 
             var targetX = this.BasePoint.X + (this.TeamCoeff * Constants.MaxGhostBustDistance * 2);
             var targetY = this.BasePoint.Y + (this.TeamCoeff * Constants.MaxGhostBustDistance * 2);
 
-            if (ShouldGoStraightToBase(this.TeamCoeff, targetX, targetY, gameState))
+            if (gameState == GameState.Late)
             {
-                this.Move(this.BasePoint);
-                return;
+                point = GetCornerToMoveAtWithGhostInLateGame(this);
+            }
+            //else
+            //{
+            //    var optimalXandY = Geometry.GetLegsOfRightTriangle(Constants.MaxDistanceFromBaseToReleaseGhost);
+            //    point = this.BasePoint
+            //        .AddX(this.TeamCoeff * optimalXandY)
+            //        .AddY(this.TeamCoeff * optimalXandY);
+            //}
+            else if (ShouldGoStraightToBase(this.TeamCoeff, targetX, targetY, gameState))
+            {
+                point = this.BasePoint;
+            }
+            else
+            {
+                point = this.GetBaseMidPoints(this.BasePoint, targetX, targetY);
             }
 
-            this.MoveToBaseMidPoints(this.BasePoint, targetX, targetY);
+            Console.Error.WriteLine("{0}) Moving towards base: {1}", this.Id, point);
+            this.Move(point);
         }
-        
-        private void MoveToBaseMidPoints(Point basePoint, int targetX, int targetY)
+
+        private Point GetBaseMidPoints(Point basePoint, int targetX, int targetY)
         {
+            Point point;
             if (this.TeamId == 0)
             {
                 if (this.Point.X > targetX)
                 {
-                    this.Move(new Point(targetX, basePoint.Y));
+                    point = new Point(targetX, basePoint.Y);
                 }
-                else if (this.Point.X < targetX)
+                else
                 {
-                    this.Move(new Point(basePoint.X, targetY));
+                    point = new Point(basePoint.X, targetY);
                 }
             }
             else
             {
                 if (this.Point.X < targetX)
                 {
-                    this.Move(new Point(targetX, basePoint.Y));
+                    point = new Point(targetX, basePoint.Y);
                 }
-                else if (this.Point.X > targetX)
+                else
                 {
-                    this.Move(new Point(basePoint.X, targetY));
+                    point = new Point(basePoint.X, targetY);
                 }
             }
+
+            return point;
         }
 
         internal void InitializeMovingPoint()
         {
-            Console.Error.WriteLine("Initializing moving point...");
-
             if (this.Position == 1)
             {
-                this.MovingPoint = this.OppositeTeamBase;
+                this.MovingPoint = this.OppositeTeamBase
+                    .AddX(this.TeamCoeff * -Constants.OptimalXandYFromCornerToCatchGhosts)
+                    .AddY(this.TeamCoeff * -Constants.OptimalXandYFromCornerToCatchGhosts);
             }
             else if (this.Position % 2 == 0)
             {
-                this.MovingPoint = this.TeamId == 0 ? Constants.TopRightCorner : Constants.BottomLeftCorner;
+                this.MovingPoint = this.TeamId == 0 ?
+                    Constants.TopRightCorner
+                        .AddX(-Constants.OptimalXandYFromCornerToCatchGhosts)
+                        .AddY(Constants.OptimalXandYFromCornerToCatchGhosts) :
+                    Constants.BottomLeftCorner
+                        .AddX(Constants.OptimalXandYFromCornerToCatchGhosts)
+                        .AddY(-Constants.OptimalXandYFromCornerToCatchGhosts);
             }
             else
             {
-                this.MovingPoint = this.TeamId == 0 ? Constants.BottomLeftCorner : Constants.TopRightCorner;
+                this.MovingPoint = this.TeamId == 0 ?
+                    Constants.BottomLeftCorner
+                        .AddX(Constants.OptimalXandYFromCornerToCatchGhosts)
+                        .AddY(-Constants.OptimalXandYFromCornerToCatchGhosts) :
+                    Constants.TopRightCorner
+                        .AddX(-Constants.OptimalXandYFromCornerToCatchGhosts)
+                        .AddY(Constants.OptimalXandYFromCornerToCatchGhosts);
             }
 
-            Console.Error.WriteLine("Moving point: {0}", this.MovingPoint);
+            this.PreviousMovingPoint = this.BasePoint;
+
+            Console.Error.WriteLine("{0}) Initialized moving point: {1}", this.Id, this.MovingPoint);
         }
 
-        internal bool ProcessGhosts(ref Dictionary<int, Ghost> visibleGhosts, GameState gameState)
+        internal bool ProcessGhosts(GameContext gameContext)
         {
-            Console.Error.WriteLine("Processing ghosts...");
-
-            var sortedGhosts = visibleGhosts.Values.OrderBy(g => g.Stamina);
+            var sortedGhosts = gameContext.VisibleGhosts.Values.OrderBy(g => g.Stamina);
+            var gameState = gameContext.GameState;
 
             foreach (var ghost in sortedGhosts)
             {
-                if (this.CanBustGhost(ghost))
+                if (this.IsGhostInBustingRange(ghost) &&
+                    this.ShouldBustGhost(ghost, gameState))
                 {
-                    Console.Error.WriteLine("Busting ghost...");
+                    Console.Error.WriteLine("{0}) Busting ghost... {1}", this.Id, ghost.Stamina);
 
                     this.Bust(ghost.Id);
+                    var ghostBustIndex = this.NumberOfBustersBustingGhost(gameContext.MyBusters, ghost) - this.NumberOfBustersBustingGhost(gameContext.EnemyBusters, ghost);
+                    var buster = gameContext.MyBusters.Values.Where(b => b.Id != this.Id).FirstOrDefault(b => b.HelpPoint == null);
+                    if (ghost.Stamina <= ghost.BustersCount &&
+                         ghostBustIndex != 0 &&
+                        (gameState == GameState.MidLate || gameState == GameState.Late))
+                    {
+                        if (buster != null)
+                        {
+                            Console.Error.WriteLine("{0}) Notifying buster #{1}", this.Id, buster.Id);
+                            if (gameState == GameState.Late)
+                            {
+                                buster.HelpPoint = this.GetCornerToMoveAtWithGhostInLateGame(this);
+                            }
+                            else if (ghostBustIndex > 0)
+                            {
+                                buster.HelpPoint = this.BasePoint
+                                    .AddX(this.TeamCoeff * Constants.MaxGhostBustDistance)
+                                    .AddY(this.TeamCoeff * Constants.MaxGhostBustDistance);
+                            }
+                            else
+                            {
+                                buster.HelpPoint = this.OppositeTeamBase
+                                    .AddX(this.TeamCoeff * -Constants.MaxGhostBustDistance)
+                                    .AddY(this.TeamCoeff * -Constants.MaxGhostBustDistance);
+                            }
+                        }
+
+                        gameContext.MyBusters.Values
+                            .Where(b => b.HelpPoint != null && Geometry.IsSamePoint(b.HelpPoint, ghost.Point))
+                            .ToList().ForEach(b => b.HelpPoint = null);
+                    }
+                    else if (ghostBustIndex == 0 && buster != null)
+                    {
+                        buster.HelpPoint = ghost.Point;
+                    }
+
                     this.HelpPoint = null;
                     return true;
                 }
                 else if (this.IsTooCloseToGhost(ghost))
                 {
-                    Console.Error.WriteLine("Is too close to ghost...");
-
                     this.Move(this.BasePoint);
                     return true;
                 }
-                else if (this.HelpPoint == null && 
-                    this.IsInRange(ghost.Point, Constants.MaxHelpDistance) &&
-                    !this.IsInterseptor && 
-                    gameState != GameState.Late)
+                else if (this.HelpPoint == null &&
+                    this.ShouldBustGhost(ghost, gameState) &&
+                    (this.CalculateTurnsToReachPoint(ghost.Point) / (ghost.BustersCount == 0 ? 1 : ghost.BustersCount)) < ghost.Stamina &&
+                    this.IsInRange(ghost.Point, Constants.MaxHelpDistance))
                 {
-                    Console.Error.WriteLine("Setting help point: {0}", ghost.Point);
+                    Console.Error.WriteLine("{0}) Setting help point: {1}", this.Id, ghost.Point);
 
                     this.HelpPoint = ghost.Point;
                 }
             }
 
-            Console.Error.WriteLine("Processed ghosts...");
             return false;
         }
 
-        internal bool ProcessEnemies(ref Dictionary<int, Buster> enemyBusters, Dictionary<int, Ghost> ghosts)
+        internal bool ProcessEnemies(GameContext gameContext)
         {
-            Console.Error.WriteLine("Processing enemies...");
-
-            foreach (var buster in enemyBusters.Values)
+            foreach (var buster in gameContext.VisibleEnemies.Values)
             {
-                if (this.CanStunEnemyBuster(buster, ghosts))
+                if (this.CanStunEnemyBuster(buster, gameContext.Ghosts, gameContext.GameState))
                 {
                     this.Stun(buster.Id);
                     buster.State = State.Stunned;
+                    //this.HelpPoint = buster.Point;
+                    Console.Error.WriteLine("{0}) Stunning buster #{1}", this.Id, buster.Id);
+
                     return true;
                 }
-                else if (this.CanInterseptEnemyBuster(buster))
+                else if (this.CanInterseptEnemyBuster(buster, gameContext.GameState))
                 {
-                    this.Move(buster.Point);
-                    return true;
+                    if (this.HelpPoint != null)
+                    {
+                        this.HelpPoint = CalculateInterseptionPoint(buster, gameContext.GameState);
+                        Console.Error.WriteLine("{0}) Intersepting buster #{1} - {2}", this.Id, buster.Id, this.MovingPoint);
+                    }
                 }
             }
 
             return false;
         }
 
-        internal void MoveRandomlyIfNoGhostsAreNear(int teamId, GameState gameState)
+        internal bool ProcessHelpPoint()
         {
-            Console.Error.WriteLine("Moving randomly...");
-
-            Point movingPoint;
-
-            if (this.IsInterseptor)
+            if (this.HelpPoint == null)
             {
-                movingPoint = this.OppositeTeamBase;
-                // TODO: Calculate best offsets to intersept
-                var baseOffset = Geometry.GetLegsOfRightTriangle(Constants.VisibleDistance);
-                var pointOffset = 300;
-
-                var point1 = movingPoint
-                            .AddX(this.TeamCoeff * -baseOffset + pointOffset)
-                            .AddY(this.TeamCoeff * -baseOffset - pointOffset);
-
-                var point2 = movingPoint
-                        .AddX(this.TeamCoeff * -baseOffset - pointOffset)
-                        .AddY(this.TeamCoeff * -baseOffset + pointOffset);
-
-                movingPoint = point1;
-
-                if (Geometry.IsSamePoint(this.Point, movingPoint))
-                {
-                    movingPoint = point2;
-                }
+                return false;
             }
-            else if (this.HelpPoint != null &&
-                Geometry.IsSamePoint(this.Point, this.HelpPoint))
+            if (this.HelpPoint != null &&
+                this.IsInRange(this.HelpPoint, Constants.MaxGhostBustDistance))
             {
                 this.HelpPoint = null;
                 movingPoint = this.MovingPoint;
+                Console.Error.WriteLine("{0}) Reached help point. Going to {1}", this.Id, movingPoint);
             }
-            else if (this.HelpPoint != null)
+            else
             {
                 movingPoint = this.HelpPoint;
+                Console.Error.WriteLine("{0}) Going to help point: {1}", this.Id, movingPoint);
             }
-            else if (HasReachedACorner())
+
+            Move(movingPoint);
+            return true;
+        }
+
+        internal void MoveRandomlyIfNoGhostsAreNear(GameContext gameContext)
+        {
+            Point movingPoint;
+            var gameState = gameContext.GameState;
+            var sortedGhosts = gameContext.Ghosts.Values.OrderBy(g => g.Stamina).ToList();
+            if (gameState != GameState.Late && gameState != GameState.MidLate)
+            {
+                sortedGhosts = sortedGhosts.Where(g => g.Stamina <= 15).ToList();
+            }
+
+            var targetGhost = sortedGhosts.FirstOrDefault();
+
+            if (this.InterseptorId > 0 && (gameState == GameState.MidLate || gameState == GameState.MidEarly))
+            {
+                movingPoint = this.OppositeTeamBase;
+                // TODO: Calculate best offsets to intersept
+                var pointOffset = this.InterseptorId == 1 ? 300 : -300;
+                if (this.TeamSize < 4)
+                {
+                    pointOffset = 0;
+                }
+
+                var baseOffset = Constants.MaxGhostBustDistance;
+
+                var point1 = movingPoint
+                            .AddX((this.TeamCoeff * -baseOffset) + pointOffset)
+                            .AddY((this.TeamCoeff * -baseOffset) - pointOffset);
+
+                movingPoint = point1;
+
+                Console.Error.WriteLine("{0}) Intersepting at {1}", this.Id, movingPoint);
+            }
+            //else if (sortedGhosts.Count > 0 && !Geometry.IsSamePoint(this.Point, targetGhost.Point))
+            //{
+            //    Console.Error.WriteLine("Moving to target ghost! {0}) {1}", targetGhost.Id, targetGhost.Point);
+            //    movingPoint = targetGhost.Point;
+            //}
+            else if (HasReachedACorner() || Geometry.IsSamePoint(this.Point, this.MovingPoint))
             {
                 movingPoint = this.GetRandomPoint();
                 this.MovingPoint = movingPoint;
+                Console.Error.WriteLine("{0}) Reached corner. Going to {1}", this.Id, movingPoint);
             }
             else
             {
                 movingPoint = this.MovingPoint;
+                Console.Error.WriteLine("{0}) Going to {1}", this.Id, movingPoint);
             }
 
             Move(movingPoint);
@@ -498,6 +623,11 @@ namespace CodeBusters
             };
 
             var randomPoint = randomPoints[Constants.Rand.Next(0, randomPoints.Count)];
+            var needOtherRandomPoint = randomPoint == this.MovingPoint;
+            while (needOtherRandomPoint)
+            {
+                randomPoint = randomPoints[Constants.Rand.Next(0, randomPoints.Count)];
+            }
 
             return randomPoint;
         }
@@ -510,23 +640,23 @@ namespace CodeBusters
         #region Commands
         internal void Move(Point point)
         {
-            Console.WriteLine("MOVE {0} {1} {2}", point.X, point.Y, this.IsInterseptor); // MOVE x y | BUST id | RELEASE
+            Console.WriteLine("MOVE {0} {1} {2}", point.X, point.Y, this.HelpPoint); // MOVE x y | BUST id | RELEASE
         }
 
         internal void Bust(int id)
         {
-            Console.WriteLine("BUST {0} BUST {0} {1}", id, this.IsInterseptor); // MOVE x y | BUST id | RELEASE
+            Console.WriteLine("BUST {0} {1}", id, this.HelpPoint); // MOVE x y | BUST id | RELEASE
         }
 
         internal void Release()
         {
-            Console.WriteLine("RELEASE RELEASE {0}", this.IsInterseptor); // MOVE x y | BUST id | RELEASE
+            Console.WriteLine("RELEASE {0}", this.HelpPoint); // MOVE x y | BUST id | RELEASE
         }
 
         internal void Stun(int id)
         {
             this.StunRecovery = Constants.TurnsUntilBusterCanStunAgain;
-            Console.WriteLine("STUN {0} STUN {0} {1}", id, this.IsInterseptor); // MOVE x y | BUST id | RELEASE
+            Console.WriteLine("STUN {0} {1}", id, this.HelpPoint); // MOVE x y | BUST id | RELEASE
         }
         #endregion
 
@@ -540,22 +670,22 @@ namespace CodeBusters
 
         internal bool HasReachedBottomRightCorner()
         {
-            return this.IsInRange(Constants.Team1Base, Constants.MaxGhostBustDistance);
+            return this.IsInRange(Constants.Team1Base, Constants.VisibleDistance);
         }
 
         internal bool HasReachedTopRightCorner()
         {
-            return this.IsInRange(Constants.TopRightCorner, Constants.MaxGhostBustDistance);
+            return this.IsInRange(Constants.TopRightCorner, Constants.VisibleDistance);
         }
 
         internal bool HasReachedBottomLeftCorner()
         {
-            return this.IsInRange(Constants.BottomLeftCorner, Constants.MaxGhostBustDistance);
+            return this.IsInRange(Constants.BottomLeftCorner, Constants.VisibleDistance);
         }
 
         internal bool HasReachedTopLeftCorner()
         {
-            return this.IsInRange(Constants.Team0Base, Constants.MaxGhostBustDistance);
+            return this.IsInRange(Constants.Team0Base, Constants.VisibleDistance);
         }
 
         internal bool IsInRange(Point point, double distance)
@@ -563,10 +693,18 @@ namespace CodeBusters
             return Geometry.CalculateDistance(this.Point, point) <= distance;
         }
 
-        internal bool CanBustGhost(Ghost ghost)
+        internal bool IsGhostInBustingRange(Ghost ghost)
         {
             return Geometry.CalculateDistance(this.Point, ghost.Point) >= Constants.MinGhostBustDistance &&
                 Geometry.CalculateDistance(this.Point, ghost.Point) <= Constants.MaxGhostBustDistance;
+        }
+
+        internal bool ShouldBustGhost(Ghost ghost, GameState gameState)
+        {
+            var isToughGhost = ghost.Stamina > 15;
+            var shouldBustToughGhost = isToughGhost && (gameState != GameState.Early);
+
+            return !isToughGhost || shouldBustToughGhost;
         }
 
         internal bool CanReleaseGhost()
@@ -584,21 +722,54 @@ namespace CodeBusters
             return Geometry.CalculateDistance(this.Point, ghost.Point) < Constants.MinGhostBustDistance;
         }
 
-        internal bool CanStunEnemyBuster(Buster buster, Dictionary<int, Ghost> ghosts)
+        internal bool CanStunEnemyBuster(Buster buster, Dictionary<int, Ghost> ghosts, GameState gameState)
         {
-            return (buster.State == State.CarryingGhost ||
-                (buster.State == State.TrappingGhost && this.GetGhostById(buster.GhostId, ghosts)?.Stamina < 10)) &&
-                this.StunRecovery <= 0 &&
+            var isInConditionToStun = this.StunRecovery <= 0 &&
+                buster.State != State.Stunned &&
                 Geometry.CalculateDistance(this.Point, buster.Point) <= Constants.MaxGhostBustDistance;
+
+            var shouldStunBusterWithGhost = (buster.State == State.CarryingGhost ||
+                (buster.State == State.TrappingGhost && this.GetGhostById(buster.GhostId, ghosts)?.Stamina < 10)) &&
+                isInConditionToStun;
+
+            var distanceFromBase = Geometry.GetHypothenuseOfRightTriangle(Constants.VisibleDistance);
+            var shouldStunBusterWithoutGhost = isInConditionToStun &&
+                (Geometry.CalculateDistance(buster.Point, this.BasePoint) <= distanceFromBase ||
+                gameState == GameState.Late || gameState == GameState.MidLate);
+
+            return isInConditionToStun /*shouldStunBusterWithGhost || shouldStunBusterWithoutGhost*/;
         }
 
-        internal bool CanInterseptEnemyBuster(Buster buster)
+        internal bool CanInterseptEnemyBuster(Buster buster, GameState gameState)
         {
-            return (buster.State == State.CarryingGhost) &&
-                this.StunRecovery <= 1 &&
-                Geometry.CalculateDistance(this.Point, buster.Point) <= (Constants.VisibleDistance - 150);
+            return buster.State == State.CarryingGhost &&
+                this.State != State.CarryingGhost &&
+                this.StunRecovery <= this.CalculateTurnsToReachPoint(this.OppositeTeamBase) &&
+                Geometry.CalculateDistance(buster.Point, this.OppositeTeamBase) > Geometry.CalculateDistance(this.Point, this.OppositeTeamBase);
         }
         #endregion
+
+        internal int NumberOfBustersBustingGhost(Dictionary<int, Buster> busters, Ghost ghost)
+        {
+            return busters.Values.Where(b => b.GhostId == ghost.Id).Count();
+        }
+
+        internal Point CalculateInterseptionPoint(Buster buster, GameState gameState)
+        {
+            var dropPoint = gameState == GameState.Late ? this.OppositeTeamBase : this.GetCornerToMoveAtWithGhostInLateGame(buster);
+            var distanceFromBusterToBase = Geometry.CalculateDistance(this.Point, dropPoint);
+
+            var interseptionPoint = Geometry.GetPointAlongLine(dropPoint, buster.Point, distanceFromBusterToBase);
+            Console.Error.WriteLine("Calculated interseption point: {0}", interseptionPoint);
+            return interseptionPoint;
+        }
+
+        internal int CalculateTurnsToReachPoint(Point point)
+        {
+            var distance = (int)Geometry.CalculateDistance(this.Point, point);
+
+            return distance / Constants.MaxBusterMoveDistance;
+        }
 
         public override string ToString()
         {
@@ -651,6 +822,11 @@ namespace CodeBusters
 
         public override string ToString()
         {
+            if (this == null)
+            {
+                return "null";
+            }
+
             return string.Format("({0},{1})", this.X, this.Y);
         }
     }
@@ -669,6 +845,52 @@ namespace CodeBusters
         MidEarly = 1,
         MidLate = 2,
         Late = 3
+    }
+
+    public class GameContext
+    {
+        private int turn;
+
+        public int MyTeamId { get; set; }
+        public Dictionary<int, Buster> MyBusters { get; set; }
+        public Dictionary<int, Buster> EnemyBusters { get; set; }
+        public Dictionary<int, Ghost> Ghosts { get; set; }
+        public GameState GameState { get; set; }
+        public int Turn
+        {
+            get { return this.turn; }
+            set
+            {
+                turn = value;
+                this.GameState = DefineGameState(value);
+            }
+        }
+        public int GhostCount { get; set; }
+        public int BustersPerTeam { get; set; }
+        public int MyScore { get; set; }
+        public int EnemyScore { get; set; }
+        public Dictionary<int, Buster> VisibleEnemies { get; set; }
+        public Dictionary<int, Ghost> VisibleGhosts { get; set; }
+
+        private GameState DefineGameState(int turn)
+        {
+            if (turn < Constants.EarlyGameTurns)
+            {
+                return GameState.Early;
+            }
+            else if (turn < Constants.MidEarlyGameTurns)
+            {
+                return GameState.MidEarly;
+            }
+            else if (turn < Constants.MidLateGameTurns)
+            {
+                return GameState.MidLate;
+            }
+            else
+            {
+                return GameState.Late;
+            }
+        }
     }
 
     public static class Geometry
